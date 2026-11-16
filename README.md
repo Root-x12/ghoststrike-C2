@@ -1,0 +1,1 @@
+# ghoststrike-C2
