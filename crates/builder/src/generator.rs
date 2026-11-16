@@ -95,12 +95,12 @@ fn compile_agent(
 ) -> Result<()> {
     use std::process::Command;
 
-    let agent_crate = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("agent");
+    // CARGO_MANIFEST_DIR = …/crates/builder  →  workspace root is two levels up
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap()  // …/crates
+        .parent().unwrap(); // …/ghoststrike-c2
 
-    println!("[*] Compiling agent: {}", agent_crate.display());
+    println!("[*] Compiling agent: {}", workspace_root.join("crates/agent").display());
     println!("[*] Target:          x86_64-pc-windows-gnu");
     println!("[*] Format:          {}", cfg.format);
 
@@ -129,7 +129,7 @@ fn compile_agent(
         .args(&args)
         .env("OUT_DIR", out_dir)
         .env("GHOSTSTRIKE_BUILD_ID", build_id)
-        .current_dir(agent_crate.parent().unwrap())
+        .current_dir(workspace_root)
         .status()
         .context("cargo build failed")?;
 
@@ -148,9 +148,7 @@ fn compile_agent(
         PayloadFormat::Exe => ("agent.exe".to_string(), None),
     };
 
-    let compiled = agent_crate
-        .parent()
-        .unwrap()
+    let compiled = workspace_root
         .join(format!("target/x86_64-pc-windows-gnu/release/{compiled_name}"));
 
     let copy_to = intermediate_path.as_deref().unwrap_or(output_path);
