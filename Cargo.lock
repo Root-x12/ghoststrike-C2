@@ -994,6 +994,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "ghoststrike-common",
+ "hex",
  "rand 0.8.8",
  "reqwest",
  "serde",
@@ -1025,11 +1026,13 @@ name = "ghoststrike-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "crossterm",
  "futures",
  "ghoststrike-common",
+ "hex",
  "rand 0.8.8",
  "ratatui",
  "serde",

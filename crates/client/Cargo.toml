@@ -23,3 +23,5 @@ crossterm = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures = "0.3"
 clap = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }

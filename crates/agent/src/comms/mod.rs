@@ -1,3 +1,4 @@
+mod dns;
 mod http;
 
 use anyhow::Result;
@@ -22,12 +23,11 @@ impl Transport {
                 Box::new(http::HttpTransport::new(cfg)?)
             }
             ListenerProtocol::Dns => {
-                // DNS transport — Phase 2 full implementation.
-                Box::new(http::HttpTransport::new(cfg)?) // fallback for now
+                Box::new(dns::DnsTransport::new(cfg)?)
             }
             ListenerProtocol::Smb => {
-                // SMB named-pipe transport — Phase 2.
-                Box::new(http::HttpTransport::new(cfg)?) // fallback for now
+                // SMB named-pipe transport — future phase.
+                Box::new(http::HttpTransport::new(cfg)?)
             }
         };
         Ok(Self { inner })

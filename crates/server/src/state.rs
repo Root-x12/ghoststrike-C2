@@ -7,12 +7,14 @@ use anyhow::Result;
 use ghoststrike_common::{AgentInfo, ListenerConfig, Task, OperatorMsg};
 
 use crate::config::ServerConfig;
+use crate::db::Db;
 
 pub type SharedState = Arc<ServerState>;
 
 #[derive(Debug)]
 pub struct ServerState {
     pub config:    ServerConfig,
+    pub db:        Option<Db>,
     pub agents:    RwLock<HashMap<Uuid, AgentInfo>>,
     pub listeners: RwLock<HashMap<Uuid, ListenerConfig>>,
     pub tasks:     RwLock<HashMap<Uuid, Vec<Task>>>,  // agent_id -> pending tasks
@@ -25,17 +27,39 @@ pub struct ServerState {
 impl ServerState {
     pub async fn new(config: ServerConfig) -> Result<Arc<Self>> {
         let (tx, _) = broadcast::channel(256);
-        Ok(Arc::new(Self {
+
+        let db = match Db::open(&config.db_path).await {
+            Ok(d)  => { tracing::info!("SQLite db opened: {}", config.db_path); Some(d) }
+            Err(e) => { tracing::warn!("SQLite unavailable ({e}), using in-memory only"); None }
+        };
+
+        let state = Arc::new(Self {
             config,
+            db,
             agents:           RwLock::new(HashMap::new()),
             listeners:        RwLock::new(HashMap::new()),
             tasks:            RwLock::new(HashMap::new()),
             broadcast:        tx,
             listener_handles: RwLock::new(HashMap::new()),
-        }))
+        });
+
+        // Restore persisted agents from DB.
+        if let Some(ref db) = state.db {
+            if let Ok(agents) = db.list_agents().await {
+                let mut map = state.agents.write().await;
+                for a in agents {
+                    map.insert(a.id, a);
+                }
+            }
+        }
+
+        Ok(state)
     }
 
     pub async fn upsert_agent(&self, info: AgentInfo) {
+        if let Some(ref db) = self.db {
+            let _ = db.upsert_agent(&info).await;
+        }
         let _ = self.broadcast.send(OperatorMsg::AgentCheckin { agent: info.clone() });
         self.agents.write().await.insert(info.id, info);
     }
@@ -53,6 +77,9 @@ impl ServerState {
     }
 
     pub async fn queue_task(&self, task: Task) {
+        if let Some(ref db) = self.db {
+            let _ = db.insert_task(&task).await;
+        }
         let agent_id = task.agent_id;
         let mut tasks = self.tasks.write().await;
         tasks.entry(agent_id).or_default().push(task);
@@ -67,12 +94,19 @@ impl ServerState {
     ) {
         use ghoststrike_common::TaskStatus;
         use chrono::Utc;
+        let status = if success { TaskStatus::Completed } else { TaskStatus::Failed };
+        let done   = Utc::now();
+
+        if let Some(ref db) = self.db {
+            let _ = db.update_task(task_id, &status, Some(&output), Some(done)).await;
+        }
+
         let mut tasks = self.tasks.write().await;
         if let Some(list) = tasks.get_mut(&agent_id) {
             if let Some(t) = list.iter_mut().find(|t| t.id == task_id) {
-                t.status       = if success { TaskStatus::Completed } else { TaskStatus::Failed };
+                t.status       = status;
                 t.output       = Some(output);
-                t.completed_at = Some(Utc::now());
+                t.completed_at = Some(done);
                 let _ = self.broadcast.send(OperatorMsg::TaskResult { task: t.clone() });
             }
         }

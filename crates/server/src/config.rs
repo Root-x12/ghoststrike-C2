@@ -12,6 +12,9 @@ pub struct ServerConfig {
     pub tls_cert:       Option<String>,
     pub tls_key:        Option<String>,
     pub server_name:    String,
+    /// Hex-encoded 32-byte AES-GCM key shared with agents. Empty = plaintext.
+    #[serde(default)]
+    pub c2_key:         String,
 }
 
 impl Default for ServerConfig {
@@ -25,6 +28,7 @@ impl Default for ServerConfig {
             tls_cert:      None,
             tls_key:       None,
             server_name:   "GhostStrike C2".into(),
+            c2_key:        String::new(),
         }
     }
 }

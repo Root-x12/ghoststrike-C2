@@ -12,6 +12,8 @@ mod tasks;
 mod syscalls;
 #[cfg(target_os = "windows")]
 mod hwbp;
+#[cfg(target_os = "windows")]
+mod inject;
 
 use anyhow::Result;
 
