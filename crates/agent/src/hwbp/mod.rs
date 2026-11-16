@@ -76,7 +76,7 @@ unsafe extern "system" fn veh_handler(ptrs: *mut EXCEPTION_POINTERS) -> i32 {
     let rec  = (*ptrs).ExceptionRecord;
     let ctx  = (*ptrs).ContextRecord;
 
-    if (*rec).ExceptionCode != EXCEPTION_SINGLE_STEP as u32 {
+    if (*rec).ExceptionCode != EXCEPTION_SINGLE_STEP {
         return EXCEPTION_CONTINUE_SEARCH;
     }
 

