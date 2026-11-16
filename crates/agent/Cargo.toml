@@ -1,0 +1,45 @@
+[package]
+name = "ghoststrike-agent"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "agent"
+path = "src/main.rs"
+
+# Cross-compile target: x86_64-pc-windows-gnu
+# cargo build --target x86_64-pc-windows-gnu --release
+
+[dependencies]
+ghoststrike-common = { path = "../common" }
+tokio = { version = "1", features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+reqwest = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_Security",
+    "Win32_System_SystemServices",
+] }
+
+[build-dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level     = "z"   # size optimise
+strip         = true
+lto           = true
+codegen-units = 1
+panic         = "abort"

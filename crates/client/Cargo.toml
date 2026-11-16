@@ -1,0 +1,25 @@
+[package]
+name = "ghoststrike-client"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ghoststrike"
+path = "src/main.rs"
+
+[dependencies]
+ghoststrike-common = { path = "../common" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+rand = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures = "0.3"
+clap = { workspace = true }

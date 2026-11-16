@@ -1,0 +1,20 @@
+[package]
+name = "ghoststrike-builder"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ghoststrike-builder"
+path = "src/main.rs"
+
+[dependencies]
+ghoststrike-common = { path = "../common" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+clap = { workspace = true }
