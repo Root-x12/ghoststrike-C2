@@ -39,25 +39,54 @@ async fn try_connect(
         .send(Message::Text(serde_json::to_string(&auth)?))
         .await?;
 
-    // After auth, request initial state
-    let req_listeners = serde_json::to_string(&OperatorMsg::ListListeners)?;
-    let req_agents    = serde_json::to_string(&OperatorMsg::ListAgents)?;
-    write.send(Message::Text(req_listeners)).await?;
-    write.send(Message::Text(req_agents)).await?;
+    // Create a channel so the app can send messages to the server.
+    let (ws_tx, mut ws_rx) = mpsc::channel::<OperatorMsg>(64);
+    let _ = event_tx.send(Event::WsConnected(ws_tx)).await;
 
-    // Forward incoming server messages to the app
-    while let Some(msg) = read.next().await {
-        let msg = msg?;
-        match msg {
-            Message::Text(text) => {
-                if let Ok(op_msg) = serde_json::from_str::<OperatorMsg>(&text) {
-                    let _ = event_tx.send(Event::Server(op_msg)).await;
+    // Spawn write task: app → server
+    let mut write_task = tokio::spawn(async move {
+        // After auth, request initial state.
+        let init_msgs = [
+            serde_json::to_string(&OperatorMsg::ListListeners).unwrap(),
+            serde_json::to_string(&OperatorMsg::ListAgents).unwrap(),
+        ];
+        for json in &init_msgs {
+            if write.send(Message::Text(json.clone())).await.is_err() {
+                return;
+            }
+        }
+        // Forward app-sourced messages.
+        while let Some(msg) = ws_rx.recv().await {
+            if let Ok(json) = serde_json::to_string(&msg) {
+                if write.send(Message::Text(json)).await.is_err() {
+                    break;
                 }
             }
-            Message::Close(_) => break,
-            _ => {}
+        }
+    });
+
+    // Read loop: server → app
+    loop {
+        tokio::select! {
+            msg = read.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(op_msg) = serde_json::from_str::<OperatorMsg>(&text) {
+                            let _ = event_tx.send(Event::Server(op_msg)).await;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(e)) => {
+                        warn!("WebSocket error: {e}");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            _ = &mut write_task => { break; }
         }
     }
 
+    let _ = event_tx.send(Event::WsDisconnected).await;
     Ok(())
 }

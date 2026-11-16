@@ -4,14 +4,13 @@ use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
 use anyhow::Result;
 
-use ghoststrike_common::{AgentInfo, ListenerConfig, Task, OperatorMsg};
+use ghoststrike_common::{AgentInfo, ListenerConfig, SessionKey, Task, OperatorMsg, x25519_generate};
 
 use crate::config::ServerConfig;
 use crate::db::Db;
 
 pub type SharedState = Arc<ServerState>;
 
-#[derive(Debug)]
 pub struct ServerState {
     pub config:    ServerConfig,
     pub db:        Option<Db>,
@@ -22,6 +21,13 @@ pub struct ServerState {
     pub broadcast: broadcast::Sender<OperatorMsg>,
     /// Listener shutdown handles: listener_id -> shutdown tx
     pub listener_handles: RwLock<HashMap<Uuid, tokio::sync::oneshot::Sender<()>>>,
+    // ── ECDH ──────────────────────────────────────────────────────────────────
+    /// Server x25519 static private key bytes (kept in memory only).
+    pub server_priv: [u8; 32],
+    /// Server x25519 static public key bytes (baked into agent payloads).
+    pub server_pub:  [u8; 32],
+    /// Per-agent AES-GCM session keys derived via ECDH.
+    pub agent_keys:  RwLock<HashMap<Uuid, SessionKey>>,
 }
 
 impl ServerState {
@@ -33,6 +39,27 @@ impl ServerState {
             Err(e) => { tracing::warn!("SQLite unavailable ({e}), using in-memory only"); None }
         };
 
+        // Resolve server x25519 keypair: load from config or generate fresh.
+        let (server_priv, server_pub) = if config.server_privkey.is_empty() {
+            let (priv_b, pub_b) = x25519_generate();
+            tracing::info!(
+                "Generated server x25519 keypair (pubkey: {}). \
+                 Add server_privkey = \"{}\" to server.toml to persist.",
+                hex::encode(pub_b),
+                hex::encode(priv_b),
+            );
+            (priv_b, pub_b)
+        } else {
+            let raw = hex::decode(&config.server_privkey)
+                .expect("server_privkey must be valid hex");
+            let mut priv_b = [0u8; 32];
+            priv_b.copy_from_slice(&raw);
+            use x25519_dalek::{StaticSecret, PublicKey as X25519Pub};
+            let pub_b = *X25519Pub::from(&StaticSecret::from(priv_b)).as_bytes();
+            tracing::info!("Loaded server x25519 pubkey: {}", hex::encode(pub_b));
+            (priv_b, pub_b)
+        };
+
         let state = Arc::new(Self {
             config,
             db,
@@ -41,8 +68,12 @@ impl ServerState {
             tasks:            RwLock::new(HashMap::new()),
             broadcast:        tx,
             listener_handles: RwLock::new(HashMap::new()),
+            server_priv,
+            server_pub,
+            agent_keys:       RwLock::new(HashMap::new()),
         });
 
+        // Restore persisted agents from DB.
         // Restore persisted agents from DB.
         if let Some(ref db) = state.db {
             if let Ok(agents) = db.list_agents().await {

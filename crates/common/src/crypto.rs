@@ -5,6 +5,8 @@ use aes_gcm::{
 use sha2::{Digest, Sha256};
 use rand::RngCore;
 use thiserror::Error;
+use hkdf::Hkdf;
+use x25519_dalek::{PublicKey as X25519Pub, StaticSecret};
 
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -85,6 +87,41 @@ pub fn random_key(n: usize) -> Vec<u8> {
     let mut k = vec![0u8; n];
     OsRng.fill_bytes(&mut k);
     k
+}
+
+// ── x25519 ECDH key exchange ──────────────────────────────────────────────────
+
+/// Generate a random x25519 keypair.
+/// Returns `(priv_bytes, pub_bytes)` both as 32-byte arrays.
+pub fn x25519_generate() -> ([u8; 32], [u8; 32]) {
+    let mut priv_bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut priv_bytes);
+    let sk = StaticSecret::from(priv_bytes);
+    let pk = X25519Pub::from(&sk);
+    (priv_bytes, *pk.as_bytes())
+}
+
+/// ECDH + HKDF-SHA256 → 32-byte AES-GCM session key.
+///
+/// Both sides call this with their own private key and the peer's public key.
+/// As long as one side is ephemeral this gives Perfect Forward Secrecy.
+pub fn x25519_session_key(
+    priv_bytes: [u8; 32],
+    peer_pub:   &[u8],
+) -> Result<SessionKey, CryptoError> {
+    if peer_pub.len() != 32 {
+        return Err(CryptoError::InvalidKey);
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(peer_pub);
+    let sk     = StaticSecret::from(priv_bytes);
+    let pk     = X25519Pub::from(arr);
+    let shared = sk.diffie_hellman(&pk);
+    let hk     = Hkdf::<Sha256>::new(None, shared.as_bytes());
+    let mut okm = [0u8; 32];
+    hk.expand(b"ghoststrike-c2-session", &mut okm)
+        .map_err(|_| CryptoError::InvalidKey)?;
+    Ok(SessionKey(okm))
 }
 
 #[cfg(test)]

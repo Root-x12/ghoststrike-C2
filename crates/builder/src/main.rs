@@ -52,6 +52,10 @@ struct Args {
     /// Hex-encoded 32-byte AES-GCM key. If omitted, plaintext comms.
     #[arg(long, default_value = "")]
     c2_key: String,
+
+    /// Hex-encoded 32-byte x25519 server static public key for ECDH key exchange.
+    #[arg(long, default_value = "")]
+    server_pubkey: String,
 }
 
 #[tokio::main]
@@ -78,17 +82,18 @@ async fn main() -> Result<()> {
     };
 
     let cfg = BuildConfig {
-        listener_id: args.listener_id.parse().unwrap_or_else(|_| Uuid::nil()),
-        c2_host:     args.host,
-        c2_port:     args.port,
+        listener_id:  args.listener_id.parse().unwrap_or_else(|_| Uuid::nil()),
+        c2_host:      args.host,
+        c2_port:      args.port,
         protocol,
-        sleep_ms:    args.sleep_ms,
-        jitter_pct:  args.jitter_pct,
-        format:      format.clone(),
-        output_path: Some(output_path.clone()),
-        dns_domain:  args.dns_domain,
-        pipe_name:   args.pipe_name,
-        c2_key:      args.c2_key,
+        sleep_ms:     args.sleep_ms,
+        jitter_pct:   args.jitter_pct,
+        format:       format.clone(),
+        output_path:  Some(output_path.clone()),
+        dns_domain:   args.dns_domain,
+        pipe_name:    args.pipe_name,
+        c2_key:       args.c2_key,
+        server_pubkey: args.server_pubkey,
     };
 
     println!("[*] Generating {} payload…", format);

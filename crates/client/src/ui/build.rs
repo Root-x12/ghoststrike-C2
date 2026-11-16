@@ -10,12 +10,21 @@ use crate::app::App;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(10),  // form
+            Constraint::Min(4),      // build log
+        ])
         .split(area);
 
-    draw_form(f, app, chunks[0]);
-    draw_help(f, app, chunks[1]);
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(chunks[0]);
+
+    draw_form(f, app, top[0]);
+    draw_help(f, app, top[1]);
+    draw_log(f, app, chunks[1]);
 }
 
 fn draw_form(f: &mut Frame, app: &App, area: Rect) {
@@ -25,7 +34,7 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
     let listener_name = listeners
         .get(bc.listener_index)
         .map(|l| format!("{} ({}:{})", l.name, l.host, l.port))
-        .unwrap_or_else(|| "No listeners".into());
+        .unwrap_or_else(|| "No listeners — start one first".into());
 
     let formats = ["EXE", "Shellcode", "DLL"];
     let format_name = formats[bc.format_index % formats.len()];
@@ -55,7 +64,7 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Payload Builder — [Enter] Generate "),
+                .title(" Payload Builder — [Enter] Generate | [←→] Cycle | [↑↓] Navigate "),
         );
     f.render_widget(list, area);
 }
@@ -64,15 +73,16 @@ fn draw_help(f: &mut Frame, _app: &App, area: Rect) {
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  Build Features",
+            "  Phase 3 Features",
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
+        Line::from("  ✓ ECDH x25519 key exchange"),
+        Line::from("    (ephemeral PFS per agent)"),
         Line::from("  ✓ Per-build AES-256-GCM key"),
-        Line::from("  ✓ Encrypted config blob"),
-        Line::from("  ✓ Randomised section names"),
-        Line::from("  ✓ Compile-time string XOR"),
-        Line::from("  ✓ No static signatures"),
+        Line::from("  ✓ Shellcode / DLL formats"),
+        Line::from("  ✓ SMB named-pipe transport"),
+        Line::from("  ✓ Process hollowing"),
         Line::from(""),
         Line::from(Span::styled(
             "  Agent Evasion",
@@ -80,21 +90,35 @@ fn draw_help(f: &mut Frame, _app: &App, area: Rect) {
         )),
         Line::from(""),
         Line::from("  ✓ Indirect syscalls"),
-        Line::from("    (SSN via ntdll walk)"),
-        Line::from("  ✓ HWBP VEH engine"),
-        Line::from("    (AMSI/ETW bypass)"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  Keybindings",
-            Style::default().fg(Color::Yellow),
-        )),
-        Line::from("  ↑↓    Select field"),
-        Line::from("  ←→    Cycle options"),
-        Line::from("  i     Edit value"),
-        Line::from("  Enter Generate"),
+        Line::from("  ✓ HWBP AMSI/ETW bypass"),
+        Line::from("  ✓ Rich header zeroed"),
+        Line::from("  ✓ Randomised sections"),
     ];
 
     let p = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(" Info "));
     f.render_widget(p, area);
+}
+
+fn draw_log(f: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = app.build_log
+        .iter()
+        .rev()
+        .take(area.height.saturating_sub(2) as usize)
+        .rev()
+        .map(|l| {
+            let style = if l.starts_with("[+]") {
+                Style::default().fg(Color::Green)
+            } else if l.starts_with("[!]") {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            ListItem::new(l.as_str()).style(style)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(" Build Log "));
+    f.render_widget(list, area);
 }

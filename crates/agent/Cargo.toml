@@ -7,6 +7,11 @@ edition = "2021"
 name = "agent"
 path = "src/main.rs"
 
+[lib]
+name = "agent"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
 # Cross-compile target: x86_64-pc-windows-gnu
 # cargo build --target x86_64-pc-windows-gnu --release
 
@@ -23,6 +28,8 @@ tracing = { workspace = true }
 rand = { workspace = true }
 reqwest = { workspace = true }
 hex = { workspace = true }
+x25519-dalek = { workspace = true }
+hkdf = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.52", features = [
@@ -33,6 +40,8 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_Memory",
     "Win32_Security",
     "Win32_System_SystemServices",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
 ] }
 
 [build-dependencies]

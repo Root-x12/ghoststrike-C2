@@ -15,6 +15,11 @@ pub struct ServerConfig {
     /// Hex-encoded 32-byte AES-GCM key shared with agents. Empty = plaintext.
     #[serde(default)]
     pub c2_key:         String,
+    /// Hex-encoded 32-byte x25519 static private key.
+    /// Auto-generated if empty; set to persist the keypair across restarts
+    /// (required so agents built against the old pubkey can still connect).
+    #[serde(default)]
+    pub server_privkey: String,
 }
 
 impl Default for ServerConfig {
@@ -29,6 +34,7 @@ impl Default for ServerConfig {
             tls_key:       None,
             server_name:   "GhostStrike C2".into(),
             c2_key:        String::new(),
+            server_privkey: String::new(),
         }
     }
 }
