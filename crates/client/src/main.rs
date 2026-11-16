@@ -77,10 +77,9 @@ async fn run(
     loop {
         term.draw(|f| ui::draw(f, &app))?;
 
-        match app.next_event(event_rx.recv()).await {
-            Some(Event::Quit) => break,
+        match event_rx.recv().await {
+            Some(Event::Quit) | None => break,
             Some(e) => app.handle(e).await,
-            None => break,
         }
     }
 
