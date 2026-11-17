@@ -95,10 +95,16 @@ fn compile_agent(
 ) -> Result<()> {
     use std::process::Command;
 
-    // CARGO_MANIFEST_DIR = …/crates/builder  →  workspace root is two levels up
-    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()  // …/crates
-        .parent().unwrap(); // …/ghoststrike-c2
+    // Derive workspace root from the running binary's location at runtime.
+    // Binary lives at <workspace>/target/{profile}/ghoststrike-server
+    // so three .parent() calls reach the workspace root.
+    // Falls back to current_dir() if the exe path is unavailable.
+    let exe = std::env::current_exe().unwrap_or_default();
+    let workspace_root_buf = exe
+        .parent().and_then(|p| p.parent()).and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let workspace_root = workspace_root_buf.as_path();
 
     println!("[*] Compiling agent: {}", workspace_root.join("crates/agent").display());
     println!("[*] Target:          x86_64-pc-windows-gnu");
