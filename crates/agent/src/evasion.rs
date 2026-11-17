@@ -81,16 +81,16 @@ fn check_debugger() -> bool {
 pub fn apply_block_dlls() {
     use windows_sys::Win32::System::Threading::{
         SetProcessMitigationPolicy, ProcessSignaturePolicy,
-        PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY,
     };
     unsafe {
-        let policy = PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY {
-            _bitfield: 1, // MicrosoftSignedOnly = bit 0
-        };
+        // PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY is a DWORD bitfield.
+        // Bit 0 = MicrosoftSignedOnly. windows-sys doesn't expose the struct,
+        // so we pass the raw u32 value directly.
+        let policy: u32 = 1;
         SetProcessMitigationPolicy(
             ProcessSignaturePolicy,
             &policy as *const _ as *const _,
-            std::mem::size_of::<PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY>(),
+            std::mem::size_of::<u32>(),
         );
     }
 }
