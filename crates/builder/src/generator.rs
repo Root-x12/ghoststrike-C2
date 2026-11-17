@@ -92,6 +92,38 @@ pub async fn generate(cfg: BuildConfig, output_path: &str) -> Result<String> {
     Ok(build_id)
 }
 
+/// Find the cargo binary using multiple strategies so the builder works
+/// when launched from a TUI without a full shell environment.
+fn find_cargo() -> String {
+    use std::path::Path;
+    // 1. CARGO env var — set by rustup when already running under cargo
+    if let Ok(c) = std::env::var("CARGO") {
+        if Path::new(&c).exists() { return c; }
+    }
+    // 2. Common HOME-based paths (tries actual HOME, /root, /home/kali)
+    let homes = [
+        std::env::var("HOME").unwrap_or_default(),
+        "/root".into(),
+        "/home/kali".into(),
+    ];
+    for home in &homes {
+        let p = format!("{home}/.cargo/bin/cargo");
+        if Path::new(&p).exists() { return p; }
+    }
+    // 3. System paths
+    for p in ["/usr/local/bin/cargo", "/usr/bin/cargo"] {
+        if Path::new(p).exists() { return p.to_string(); }
+    }
+    // 4. `which cargo` as last resort
+    if let Ok(out) = std::process::Command::new("which").arg("cargo").output() {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() { return s; }
+        }
+    }
+    "cargo".to_string()
+}
+
 fn compile_agent(
     out_dir:     &std::path::Path,
     output_path: &str,
@@ -136,19 +168,9 @@ fn compile_agent(
     ];
     args.extend(bin_arg.iter().map(|s| *s));
 
-    // Resolve absolute path to cargo binary so this works when the binary
-    // is launched without a full shell (no ~/.cargo/bin in PATH).
-    // Priority: CARGO env var (set by rustup) → ~/.cargo/bin/cargo → "cargo"
-    let cargo_bin = std::env::var("CARGO").ok()
-        .or_else(|| {
-            std::env::var("HOME").ok().and_then(|home| {
-                let p = format!("{home}/.cargo/bin/cargo");
-                std::path::Path::new(&p).exists().then_some(p)
-            })
-        })
-        .unwrap_or_else(|| "cargo".to_string());
-
+    let cargo_bin = find_cargo();
     println!("[*] cargo:           {cargo_bin}");
+    println!("[*] workspace:       {}", workspace_root.display());
 
     let status = Command::new(&cargo_bin)
         .args(&args)
@@ -156,7 +178,7 @@ fn compile_agent(
         .env("GHOSTSTRIKE_BUILD_ID", build_id)
         .current_dir(workspace_root)
         .status()
-        .context("cargo build failed")?;
+        .with_context(|| format!("cargo not found at '{cargo_bin}' — PATH may not include ~/.cargo/bin"))?;
 
     if !status.success() {
         anyhow::bail!("Agent compilation failed");
