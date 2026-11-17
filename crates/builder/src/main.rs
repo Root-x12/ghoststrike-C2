@@ -82,18 +82,23 @@ async fn main() -> Result<()> {
     };
 
     let cfg = BuildConfig {
-        listener_id:  args.listener_id.parse().unwrap_or_else(|_| Uuid::nil()),
-        c2_host:      args.host,
-        c2_port:      args.port,
+        listener_id:     args.listener_id.parse().unwrap_or_else(|_| Uuid::nil()),
+        c2_host:         args.host,
+        c2_port:         args.port,
         protocol,
-        sleep_ms:     args.sleep_ms,
-        jitter_pct:   args.jitter_pct,
-        format:       format.clone(),
-        output_path:  Some(output_path.clone()),
-        dns_domain:   args.dns_domain,
-        pipe_name:    args.pipe_name,
-        c2_key:       args.c2_key,
-        server_pubkey: args.server_pubkey,
+        sleep_ms:        args.sleep_ms,
+        jitter_pct:      args.jitter_pct,
+        format:          format.clone(),
+        output_path:     Some(output_path.clone()),
+        dns_domain:      args.dns_domain,
+        pipe_name:       args.pipe_name,
+        c2_key:          args.c2_key,
+        server_pubkey:   args.server_pubkey,
+        sleep_obf:       ghoststrike_common::SleepObfuscation::None,
+        injection:       ghoststrike_common::InjectionMethod::CreateThread,
+        sandbox_evasion: false,
+        stack_spoof:     false,
+        block_dlls:      false,
     };
 
     println!("[*] Generating {} payload…", format);
