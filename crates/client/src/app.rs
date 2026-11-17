@@ -203,6 +203,37 @@ impl App {
                     return;
                 }
                 if self.input_mode == InputMode::Insert {
+                    // Build tab: redirect typing into the focused build field
+                    if self.tab == Tab::Build {
+                        match key.code {
+                            KeyCode::Esc => { self.input_mode = InputMode::Normal; }
+                            KeyCode::Enter => self.trigger_build().await,
+                            KeyCode::Char(c) => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                                    self.input_mode = InputMode::Normal;
+                                } else {
+                                    let bc = &mut self.build_config;
+                                    match bc.focused_field {
+                                        1 => bc.sleep_ms.push(c),
+                                        2 => bc.jitter_pct.push(c),
+                                        4 => bc.output_path.push(c),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                let bc = &mut self.build_config;
+                                match bc.focused_field {
+                                    1 => { bc.sleep_ms.pop(); }
+                                    2 => { bc.jitter_pct.pop(); }
+                                    4 => { bc.output_path.pop(); }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                        return;
+                    }
                     match key.code {
                         KeyCode::Esc => {
                             self.input_mode = InputMode::Normal;
