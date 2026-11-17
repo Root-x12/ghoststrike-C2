@@ -131,10 +131,26 @@ fn compile_agent(
     ];
     args.extend(bin_arg.iter().map(|s| *s));
 
+    // Ensure ~/.cargo/bin is on PATH so cargo is found when this binary
+    // is launched without a full shell environment (e.g. from a TUI).
+    let path_env = {
+        let cargo_home = std::env::var("CARGO_HOME")
+            .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/.cargo")))
+            .unwrap_or_default();
+        let cargo_bin = format!("{cargo_home}/bin");
+        let current = std::env::var("PATH").unwrap_or_default();
+        if current.contains(&cargo_bin) {
+            current
+        } else {
+            format!("{cargo_bin}:{current}")
+        }
+    };
+
     let status = Command::new("cargo")
         .args(&args)
         .env("OUT_DIR", out_dir)
         .env("GHOSTSTRIKE_BUILD_ID", build_id)
+        .env("PATH", path_env)
         .current_dir(workspace_root)
         .status()
         .context("cargo build failed")?;
